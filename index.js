@@ -62,45 +62,45 @@ async function run() {
     });
 
     // Get All Books / Latest 6 Books
-    
-
-    // Get Single Book
-    app.get("/books/:id", async (req, res) => {
+    app.get("/books", async (req, res) => {
       try {
-        const { ObjectId } = await import("mongodb");
-        const { id } = req.params;
+        const limit = Number(req.query.limit);
 
-        if (!ObjectId.isValid(id)) {
-          return res.status(400).send({
-            success: false,
-            message: "Invalid book ID",
-          });
+        let query = booksCollection
+          .find()
+          .sort({ createdAt: -1 });
+
+        // Homepage: GET /books?limit=6
+        if (req.query.limit !== undefined) {
+          if (!Number.isInteger(limit) || limit < 1) {
+            return res.status(400).send({
+              success: false,
+              message: "Limit must be a positive integer",
+            });
+          }
+
+          query = query.limit(Math.min(limit, 100));
         }
 
-        const book = await booksCollection.findOne({
-          _id: new ObjectId(id),
-        });
-
-        if (!book) {
-          return res.status(404).send({
-            success: false,
-            message: "Book not found",
-          });
-        }
+        const books = await query.toArray();
 
         res.status(200).send({
           success: true,
-          data: book,
+          totalBooks: books.length,
+          data: books,
         });
       } catch (error) {
-        console.error("Get Single Book Error:", error);
+        console.error("Get Books Error:", error);
 
         res.status(500).send({
           success: false,
-          message: "Failed to fetch book",
+          message: "Failed to fetch books",
         });
       }
     });
+
+    // Get Single Book
+   
 
     // Add New Book
     app.post("/books", async (req, res) => {
