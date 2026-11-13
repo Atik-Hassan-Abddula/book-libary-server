@@ -58,6 +58,7 @@ async function run() {
 
     // =====================================
     // ROOT API
+    // GET /
     // =====================================
 
     app.get("/", (req, res) => {
@@ -68,6 +69,7 @@ async function run() {
 
     // =====================================
     // CHECK DATABASE
+    // GET /health
     // =====================================
 
     app.get("/health", async (req, res) => {
@@ -213,6 +215,90 @@ async function run() {
     });
 
     // =====================================
+    // DELETE MY BOOK
+    // DELETE /books/:id?email=user@email.com
+    // =====================================
+
+    app.delete("/books/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        const email = req.query.email
+          ?.trim()
+          .toLowerCase();
+
+        // Validate Book ID
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).send({
+            success: false,
+            message: "Invalid book ID.",
+          });
+        }
+
+        // Validate User Email
+        if (!email) {
+          return res.status(400).send({
+            success: false,
+            message: "User email is required.",
+          });
+        }
+
+        const bookObjectId = new ObjectId(id);
+
+        // Check book ownership
+        const book = await booksCollection.findOne({
+          _id: bookObjectId,
+          userEmail: email,
+        });
+
+        if (!book) {
+          return res.status(404).send({
+            success: false,
+            message: "Book not found or you cannot delete this book.",
+          });
+        }
+
+        // Check active borrow records
+        const activeBorrows = await borrowsCollection.countDocuments({
+          bookId: bookObjectId,
+          status: "borrowed",
+        });
+
+        if (activeBorrows > 0) {
+          return res.status(409).send({
+            success: false,
+            message: "This book cannot be deleted while it is borrowed.",
+          });
+        }
+
+        // Delete book from MongoDB
+        const result = await booksCollection.deleteOne({
+          _id: bookObjectId,
+          userEmail: email,
+        });
+
+        if (result.deletedCount === 0) {
+          return res.status(404).send({
+            success: false,
+            message: "Book could not be deleted.",
+          });
+        }
+
+        return res.status(200).send({
+          success: true,
+          message: "Book deleted successfully!",
+        });
+      } catch (error) {
+        console.error("Delete Book Error:", error);
+
+        return res.status(500).send({
+          success: false,
+          message: "Failed to delete book.",
+        });
+      }
+    });
+
+    // =====================================
     // ADD NEW BOOK
     // POST /books
     // =====================================
@@ -271,6 +357,7 @@ async function run() {
           });
         }
 
+        // Validate image URL
         let validImageUrl;
 
         try {
@@ -303,9 +390,7 @@ async function run() {
           createdAt: new Date(),
         };
 
-        const result = await booksCollection.insertOne(
-          newBook
-        );
+        const result = await booksCollection.insertOne(newBook);
 
         res.status(201).send({
           success: true,
@@ -365,7 +450,7 @@ async function run() {
         const bookObjectId = new ObjectId(bookId);
         const normalizedEmail = userEmail.trim().toLowerCase();
 
-        // Atomically decrease available quantity.
+        // Atomically decrease available quantity
         const updatedBook = await booksCollection.findOneAndUpdate(
           {
             _id: bookObjectId,
@@ -436,7 +521,7 @@ async function run() {
       } catch (error) {
         console.error("Borrow Book Error:", error);
 
-        // Restore quantity if saving the borrow record failed.
+        // Restore quantity if saving borrow record failed
         if (reservedBookId) {
           try {
             await booksCollection.updateOne(
@@ -517,7 +602,7 @@ async function run() {
 
         const borrowObjectId = new ObjectId(borrowId);
 
-        // Change status only if currently borrowed.
+        // Change status only if currently borrowed
         const borrowResult = await borrowsCollection.updateOne(
           {
             _id: borrowObjectId,
@@ -553,7 +638,7 @@ async function run() {
           _id: borrowObjectId,
         });
 
-        // Increase available book quantity.
+        // Increase available book quantity
         const quantityResult = await booksCollection.updateOne(
           {
             _id: borrowRecord.bookId,
@@ -564,7 +649,7 @@ async function run() {
         );
 
         if (quantityResult.matchedCount === 0) {
-          // Restore borrow status if original book is missing.
+          // Restore borrow status if original book is missing
           await borrowsCollection.updateOne(
             {
               _id: borrowObjectId,
