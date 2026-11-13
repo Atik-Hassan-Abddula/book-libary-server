@@ -52,6 +52,8 @@ async function run() {
           collection: "books",
         });
       } catch (error) {
+        console.error("Health Check Error:", error);
+
         res.status(500).send({
           success: false,
           message: "Database connection failed",
@@ -59,25 +61,43 @@ async function run() {
       }
     });
 
-    // Get All Books
-    app.get("/books", async (req, res) => {
+    // Get All Books / Latest 6 Books
+    
+
+    // Get Single Book
+    app.get("/books/:id", async (req, res) => {
       try {
-        const books = await booksCollection
-          .find()
-          .sort({ createdAt: -1 })
-          .toArray();
+        const { ObjectId } = await import("mongodb");
+        const { id } = req.params;
+
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).send({
+            success: false,
+            message: "Invalid book ID",
+          });
+        }
+
+        const book = await booksCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
+        if (!book) {
+          return res.status(404).send({
+            success: false,
+            message: "Book not found",
+          });
+        }
 
         res.status(200).send({
           success: true,
-          totalBooks: books.length,
-          data: books,
+          data: book,
         });
       } catch (error) {
-        console.error("Get Books Error:", error);
+        console.error("Get Single Book Error:", error);
 
         res.status(500).send({
           success: false,
-          message: "Failed to fetch books",
+          message: "Failed to fetch book",
         });
       }
     });
@@ -87,7 +107,7 @@ async function run() {
       try {
         const book = req.body;
 
-        if (!book.title || !book.author) {
+        if (!book.title?.trim() || !book.author?.trim()) {
           return res.status(400).send({
             success: false,
             message: "Book title and author are required",
@@ -105,6 +125,8 @@ async function run() {
 
         const newBook = {
           ...book,
+          title: book.title.trim(),
+          author: book.author.trim(),
           quantity,
           availableQuantity: quantity,
           createdAt: new Date(),
@@ -126,16 +148,16 @@ async function run() {
         });
       }
     });
+
+    // Start Server
+    app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+    });
+
   } catch (error) {
     console.error("MongoDB Connection Error:", error);
     process.exit(1);
   }
 }
 
-run()
-  .then(() => {
-    app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
-    });
-  })
-  .catch(console.error);
+run().catch(console.error);
