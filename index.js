@@ -40,7 +40,17 @@ async function run() {
       res.send("BookNook Library Server is Running!");
     });
 
-    
+    // Add New Book
+    app.post("/books", async (req, res) => {
+      try {
+        const book = req.body;
+
+        if (!book.title || !book.author) {
+          return res.status(400).send({
+            success: false,
+            message: "Book title and author are required",
+          });
+        }
 
         const newBook = {
           ...book,
