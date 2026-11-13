@@ -5,6 +5,7 @@ import {
   ServerApiVersion,
   ObjectId,
 } from "mongodb";
+
 import cors from "cors";
 import "dotenv/config";
 
@@ -91,6 +92,7 @@ async function run() {
 
     // =====================================
     // GET ALL BOOKS / LATEST BOOKS
+    // GET /books
     // =====================================
 
     app.get("/books", async (req, res) => {
@@ -131,6 +133,7 @@ async function run() {
 
     // =====================================
     // GET SINGLE BOOK
+    // GET /books/:id
     // =====================================
 
     app.get("/books/:id", async (req, res) => {
@@ -170,7 +173,48 @@ async function run() {
     });
 
     // =====================================
+    // GET MY ADDED BOOKS
+    // GET /my-books?email=user@email.com
+    // =====================================
+
+    app.get("/my-books", async (req, res) => {
+      try {
+        const email = req.query.email
+          ?.trim()
+          .toLowerCase();
+
+        if (!email) {
+          return res.status(400).send({
+            success: false,
+            message: "User email is required",
+          });
+        }
+
+        const myBooks = await booksCollection
+          .find({
+            userEmail: email,
+          })
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        res.status(200).send({
+          success: true,
+          totalBooks: myBooks.length,
+          data: myBooks,
+        });
+      } catch (error) {
+        console.error("Get My Books Error:", error);
+
+        res.status(500).send({
+          success: false,
+          message: "Failed to fetch your books",
+        });
+      }
+    });
+
+    // =====================================
     // ADD NEW BOOK
+    // POST /books
     // =====================================
 
     app.post("/books", async (req, res) => {
@@ -322,8 +366,6 @@ async function run() {
         const normalizedEmail = userEmail.trim().toLowerCase();
 
         // Atomically decrease available quantity.
-        // This prevents borrowing when no copies are available.
-
         const updatedBook = await booksCollection.findOneAndUpdate(
           {
             _id: bookObjectId,
@@ -423,7 +465,9 @@ async function run() {
 
     app.get("/my-borrows", async (req, res) => {
       try {
-        const email = req.query.email?.trim().toLowerCase();
+        const email = req.query.email
+          ?.trim()
+          .toLowerCase();
 
         if (!email) {
           return res.status(400).send({
@@ -471,12 +515,12 @@ async function run() {
           });
         }
 
-        // Change status only if it is currently borrowed.
-        // This prevents returning the same record twice.
+        const borrowObjectId = new ObjectId(borrowId);
 
+        // Change status only if currently borrowed.
         const borrowResult = await borrowsCollection.updateOne(
           {
-            _id: new ObjectId(borrowId),
+            _id: borrowObjectId,
             status: "borrowed",
           },
           {
@@ -489,7 +533,7 @@ async function run() {
 
         if (borrowResult.matchedCount === 0) {
           const existingBorrow = await borrowsCollection.findOne({
-            _id: new ObjectId(borrowId),
+            _id: borrowObjectId,
           });
 
           if (!existingBorrow) {
@@ -506,20 +550,24 @@ async function run() {
         }
 
         const borrowRecord = await borrowsCollection.findOne({
-          _id: new ObjectId(borrowId),
+          _id: borrowObjectId,
         });
 
         // Increase available book quantity.
         const quantityResult = await booksCollection.updateOne(
-          { _id: borrowRecord.bookId },
-          { $inc: { availableQuantity: 1 } }
+          {
+            _id: borrowRecord.bookId,
+          },
+          {
+            $inc: { availableQuantity: 1 },
+          }
         );
 
         if (quantityResult.matchedCount === 0) {
-          // Restore the borrow status if the book record is missing.
+          // Restore borrow status if original book is missing.
           await borrowsCollection.updateOne(
             {
-              _id: new ObjectId(borrowId),
+              _id: borrowObjectId,
               status: "returned",
             },
             {
