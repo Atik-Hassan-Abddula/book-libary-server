@@ -1,17 +1,31 @@
 
 import express from "express";
-import { MongoClient, ServerApiVersion } from "mongodb";
+import {
+  MongoClient,
+  ServerApiVersion,
+  ObjectId,
+} from "mongodb";
 import cors from "cors";
 import "dotenv/config";
+
+// =====================================
+// INITIAL CONFIGURATION
+// =====================================
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Middleware
+// =====================================
+// MIDDLEWARE
+// =====================================
+
 app.use(cors());
 app.use(express.json());
 
-// MongoDB Connection
+// =====================================
+// MONGODB CONNECTION
+// =====================================
+
 const uri = process.env.MONGODB_URI;
 
 if (!uri) {
@@ -26,6 +40,10 @@ const client = new MongoClient(uri, {
   },
 });
 
+// =====================================
+// DATABASE
+// =====================================
+
 async function run() {
   try {
     await client.connect();
@@ -35,12 +53,20 @@ async function run() {
 
     console.log("MongoDB Connected Successfully!");
 
-    // Root API
+    // =====================================
+    // ROOT API
+    // =====================================
+
     app.get("/", (req, res) => {
-      res.send("BookNook Library Server is Running!");
+      res.status(200).send(
+        "BookNook Library Server is Running!"
+      );
     });
 
-    // Check Database
+    // =====================================
+    // CHECK DATABASE
+    // =====================================
+
     app.get("/health", async (req, res) => {
       try {
         await client.db("admin").command({ ping: 1 });
@@ -61,7 +87,10 @@ async function run() {
       }
     });
 
-    // Get All Books / Latest 6 Books
+    // =====================================
+    // GET ALL BOOKS / LATEST BOOKS
+    // =====================================
+
     app.get("/books", async (req, res) => {
       try {
         const limit = Number(req.query.limit);
@@ -72,7 +101,10 @@ async function run() {
 
         // Homepage: GET /books?limit=6
         if (req.query.limit !== undefined) {
-          if (!Number.isInteger(limit) || limit < 1) {
+          if (
+            !Number.isInteger(limit) ||
+            limit < 1
+          ) {
             return res.status(400).send({
               success: false,
               message: "Limit must be a positive integer",
@@ -99,44 +131,152 @@ async function run() {
       }
     });
 
-    // Get Single Book
-   
+    // =====================================
+    // GET SINGLE BOOK
+    // =====================================
 
-    // Add New Book
+    app.get("/books/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).send({
+            success: false,
+            message: "Invalid book ID",
+          });
+        }
+
+        const book = await booksCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
+        if (!book) {
+          return res.status(404).send({
+            success: false,
+            message: "Book not found",
+          });
+        }
+
+        res.status(200).send({
+          success: true,
+          data: book,
+        });
+      } catch (error) {
+        console.error("Get Single Book Error:", error);
+
+        res.status(500).send({
+          success: false,
+          message: "Failed to fetch book",
+        });
+      }
+    });
+
+    // =====================================
+    // ADD NEW BOOK
+    // =====================================
+
     app.post("/books", async (req, res) => {
       try {
-        const book = req.body;
-
-        if (!book.title?.trim() || !book.author?.trim()) {
-          return res.status(400).send({
-            success: false,
-            message: "Book title and author are required",
-          });
-        }
-
-        const quantity = Number(book.quantity ?? 1);
-
-        if (!Number.isInteger(quantity) || quantity < 1) {
-          return res.status(400).send({
-            success: false,
-            message: "Quantity must be a positive integer",
-          });
-        }
-
-        const newBook = {
-          ...book,
-          title: book.title.trim(),
-          author: book.author.trim(),
+        const {
+          title,
+          author,
+          category,
+          imageUrl,
+          description,
           quantity,
-          availableQuantity: quantity,
+          userName,
+          userEmail,
+        } = req.body;
+
+        // Required field validation
+        if (
+          !title?.trim() ||
+          !author?.trim() ||
+          !category?.trim() ||
+          !imageUrl?.trim() ||
+          !description?.trim() ||
+          !userEmail?.trim()
+        ) {
+          return res.status(400).send({
+            success: false,
+            message: "Please fill in all required fields.",
+          });
+        }
+
+        // Quantity validation
+        const totalQuantity = Number(quantity);
+
+        if (
+          !Number.isInteger(totalQuantity) ||
+          totalQuantity < 1
+        ) {
+          return res.status(400).send({
+            success: false,
+            message: "Quantity must be a positive integer.",
+          });
+        }
+
+        // Category validation
+        const allowedCategories = [
+          "Fiction",
+          "Science",
+          "History",
+          "Kids",
+          "Others",
+        ];
+
+        if (!allowedCategories.includes(category)) {
+          return res.status(400).send({
+            success: false,
+            message: "Invalid book category.",
+          });
+        }
+
+        // Image URL validation
+        let validImageUrl;
+
+        try {
+          validImageUrl = new URL(imageUrl.trim());
+
+          if (
+            !["http:", "https:"].includes(
+              validImageUrl.protocol
+            )
+          ) {
+            throw new Error("Invalid image URL");
+          }
+        } catch {
+          return res.status(400).send({
+            success: false,
+            message: "Please provide a valid image URL.",
+          });
+        }
+
+        // New Book Document
+        const newBook = {
+          title: title.trim(),
+          author: author.trim(),
+          category: category,
+          imageUrl: validImageUrl.toString(),
+          description: description.trim(),
+
+          quantity: totalQuantity,
+          availableQuantity: totalQuantity,
+
+          userName: userName?.trim() || "",
+          userEmail: userEmail.trim().toLowerCase(),
+
           createdAt: new Date(),
         };
 
-        const result = await booksCollection.insertOne(newBook);
+        // Save Book to MongoDB
+        const result = await booksCollection.insertOne(
+          newBook
+        );
 
         res.status(201).send({
           success: true,
-          message: "Book added successfully",
+          message: "Book added successfully!",
           insertedId: result.insertedId,
         });
       } catch (error) {
@@ -149,9 +289,13 @@ async function run() {
       }
     });
 
-    // Start Server
+    // =====================================
+    // START SERVER
+    // =====================================
+
     app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
+      console.log(`Server URL: http://localhost:${PORT}`);
     });
 
   } catch (error) {
@@ -159,5 +303,9 @@ async function run() {
     process.exit(1);
   }
 }
+
+// =====================================
+// RUN SERVER
+// =====================================
 
 run().catch(console.error);
