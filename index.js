@@ -14,11 +14,6 @@ import { timingSafeEqual } from "crypto";
 import verifyToken from "./middleware/verifyToken.js";
 
 const app = express();
-const PORT = process.env.PORT || 5000;
-
-// =====================================
-// ENVIRONMENT VARIABLES
-// =====================================
 
 const MONGODB_URI = process.env.MONGODB_URI;
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -27,24 +22,39 @@ const AUTH_EXCHANGE_SECRET =
   process.env.AUTH_EXCHANGE_SECRET?.trim();
 
 if (!MONGODB_URI) {
-  throw new Error("MONGODB_URI is missing from .env");
+  throw new Error("MONGODB_URI is missing.");
 }
 
 if (!JWT_SECRET) {
-  throw new Error("JWT_SECRET is missing from .env");
+  throw new Error("JWT_SECRET is missing.");
 }
 
 if (!AUTH_EXCHANGE_SECRET) {
-  throw new Error("AUTH_EXCHANGE_SECRET is missing from .env");
+  throw new Error("AUTH_EXCHANGE_SECRET is missing.");
 }
 
 // =====================================
-// MIDDLEWARE
+// CORS
 // =====================================
+
+const allowedOrigins = [
+  "http://localhost:3000",
+  ...(process.env.CLIENT_URL || "")
+    .split(",")
+    .map((url) => url.trim().replace(/\/+$/, ""))
+    .filter(Boolean),
+];
 
 app.use(
   cors({
-    origin: process.env.CLIENT_URL || "http://localhost:3000",
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      console.log("Blocked CORS origin:", origin);
+      return callback(new Error("Not allowed by CORS"));
+    },
     methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: [
       "Content-Type",
@@ -54,7 +64,7 @@ app.use(
   })
 );
 
-app.use(express.json());
+app.use(express.json({ limit: "1mb" }));
 
 // =====================================
 // MONGODB CONNECTION
@@ -73,8 +83,55 @@ let usersCollection;
 let booksCollection;
 let borrowsCollection;
 
+let connectionPromise;
+
+const connectDB = async () => {
+  if (database) return database;
+
+  if (!connectionPromise) {
+    connectionPromise = (async () => {
+      await client.connect();
+
+      database = client.db("booknook");
+
+      usersCollection = database.collection("users");
+      booksCollection = database.collection("books");
+      borrowsCollection = database.collection("borrows");
+
+      await usersCollection.createIndex(
+        { email: 1 },
+        { unique: true }
+      );
+
+      console.log("MongoDB Connected Successfully!");
+
+      return database;
+    })().catch((error) => {
+      connectionPromise = null;
+      throw error;
+    });
+  }
+
+  return connectionPromise;
+};
+
+// Ensure database is connected before API requests.
+app.use(async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (error) {
+    console.error("MongoDB connection error:", error);
+
+    res.status(503).json({
+      success: false,
+      message: "Database connection unavailable.",
+    });
+  }
+});
+
 // =====================================
-// JWT TOKEN
+// HELPERS
 // =====================================
 
 const generateToken = (user) => {
@@ -91,10 +148,6 @@ const generateToken = (user) => {
   );
 };
 
-// =====================================
-// SAFE USER
-// =====================================
-
 const getSafeUser = (user) => ({
   _id: user._id,
   name: user.name,
@@ -107,7 +160,7 @@ const getSafeUser = (user) => ({
 // =====================================
 
 app.get("/", (req, res) => {
-  res.send("BookNook API is running!");
+  res.status(200).send("BookNook API is running!");
 });
 
 // =====================================
@@ -116,7 +169,7 @@ app.get("/", (req, res) => {
 
 app.get("/health", async (req, res) => {
   try {
-    await client.db("admin").command({ ping: 1 });
+    await database.command({ ping: 1 });
 
     res.status(200).json({
       success: true,
@@ -299,28 +352,18 @@ app.post("/auth/login", async (req, res) => {
 
 app.post("/auth/google-exchange", async (req, res) => {
   try {
-    const receivedSecret = req.headers["x-auth-exchange-secret"];
+    const receivedSecret =
+      req.headers["x-auth-exchange-secret"];
 
-    const expectedSecret =
-      process.env.AUTH_EXCHANGE_SECRET?.trim();
+    const expectedSecret = AUTH_EXCHANGE_SECRET;
 
     const actualSecret =
       typeof receivedSecret === "string"
         ? receivedSecret.trim()
         : "";
 
-    // Debug information (never print actual secrets)
-    console.log("========== GOOGLE EXCHANGE DEBUG ==========");
-    console.log("Received secret exists:", Boolean(actualSecret));
-    console.log("Expected secret exists:", Boolean(expectedSecret));
-    console.log("Received secret length:", actualSecret.length);
-    console.log("Expected secret length:", expectedSecret?.length || 0);
-    console.log("===========================================");
-
-    // Secret verification
     if (
       !actualSecret ||
-      !expectedSecret ||
       Buffer.byteLength(actualSecret) !==
         Buffer.byteLength(expectedSecret) ||
       !timingSafeEqual(
@@ -334,7 +377,6 @@ app.post("/auth/google-exchange", async (req, res) => {
       });
     }
 
-    // Verify Google account information
     const { name, email, image, emailVerified } = req.body;
 
     if (
@@ -353,7 +395,10 @@ app.post("/auth/google-exchange", async (req, res) => {
 
     const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-    if (!trimmedName || !emailPattern.test(normalizedEmail)) {
+    if (
+      !trimmedName ||
+      !emailPattern.test(normalizedEmail)
+    ) {
       return res.status(400).json({
         success: false,
         message: "Invalid Google account information.",
@@ -364,7 +409,6 @@ app.post("/auth/google-exchange", async (req, res) => {
       email: normalizedEmail,
     });
 
-    // Create Google user if not found
     if (!user) {
       const newUser = {
         name: trimmedName,
@@ -580,7 +624,10 @@ app.post("/books", verifyToken, async (req, res) => {
 
     const parsedQuantity = Number(quantity);
 
-    if (!Number.isInteger(parsedQuantity) || parsedQuantity < 1) {
+    if (
+      !Number.isInteger(parsedQuantity) ||
+      parsedQuantity < 1
+    ) {
       return res.status(400).json({
         success: false,
         message: "Quantity must be a positive whole number.",
@@ -711,17 +758,6 @@ app.post("/borrow", verifyToken, async (req, res) => {
       });
     }
 
-    const book = await booksCollection.findOne({
-      _id: new ObjectId(bookId),
-    });
-
-    if (!book) {
-      return res.status(404).json({
-        success: false,
-        message: "Book not found.",
-      });
-    }
-
     const alreadyBorrowed = await borrowsCollection.findOne({
       bookId,
       userId: req.user.userId,
@@ -739,6 +775,39 @@ app.post("/borrow", verifyToken, async (req, res) => {
     const dueDate = new Date(borrowedAt);
     dueDate.setDate(dueDate.getDate() + borrowDays);
 
+    const bookUpdate = await booksCollection.updateOne(
+      {
+        _id: new ObjectId(bookId),
+        availableQuantity: { $gte: 1 },
+      },
+      {
+        $inc: { availableQuantity: -1 },
+      }
+    );
+
+    if (bookUpdate.modifiedCount === 0) {
+      return res.status(409).json({
+        success: false,
+        message: "This book is no longer available.",
+      });
+    }
+
+    const book = await booksCollection.findOne({
+      _id: new ObjectId(bookId),
+    });
+
+    if (!book) {
+      await booksCollection.updateOne(
+        { _id: new ObjectId(bookId) },
+        { $inc: { availableQuantity: 1 } }
+      );
+
+      return res.status(404).json({
+        success: false,
+        message: "Book not found.",
+      });
+    }
+
     const borrowRecord = {
       bookId,
       bookTitle: book.title,
@@ -752,23 +821,6 @@ app.post("/borrow", verifyToken, async (req, res) => {
       status: "borrowed",
       returnedAt: null,
     };
-
-    const updateResult = await booksCollection.updateOne(
-      {
-        _id: new ObjectId(bookId),
-        availableQuantity: { $gte: 1 },
-      },
-      {
-        $inc: { availableQuantity: -1 },
-      }
-    );
-
-    if (updateResult.modifiedCount === 0) {
-      return res.status(409).json({
-        success: false,
-        message: "This book is no longer available.",
-      });
-    }
 
     try {
       const borrowResult = await borrowsCollection.insertOne(
@@ -848,7 +900,7 @@ app.patch(
         });
       }
 
-      const updateResult = await borrowsCollection.findOneAndUpdate(
+      const borrow = await borrowsCollection.findOneAndUpdate(
         {
           _id: new ObjectId(borrowId),
           userId: req.user.userId,
@@ -864,10 +916,6 @@ app.patch(
           returnDocument: "before",
         }
       );
-
-      // MongoDB driver versions may return either a document
-      // or a ModifyResult object.
-      const borrow = updateResult?.value ?? updateResult;
 
       if (!borrow) {
         const existingBorrow = await borrowsCollection.findOne({
@@ -889,8 +937,12 @@ app.patch(
       }
 
       const bookUpdate = await booksCollection.updateOne(
-        { _id: new ObjectId(borrow.bookId) },
-        { $inc: { availableQuantity: 1 } }
+        {
+          _id: new ObjectId(borrow.bookId),
+        },
+        {
+          $inc: { availableQuantity: 1 },
+        }
       );
 
       if (bookUpdate.matchedCount === 0) {
@@ -957,35 +1009,7 @@ app.use((error, req, res, next) => {
 });
 
 // =====================================
-// START SERVER
+// VERCEL SERVERLESS EXPORT
 // =====================================
 
-const run = async () => {
-  try {
-    await client.connect();
-
-    database = client.db("booknook");
-
-    usersCollection = database.collection("users");
-    booksCollection = database.collection("books");
-    borrowsCollection = database.collection("borrows");
-
-    await usersCollection.createIndex(
-      { email: 1 },
-      { unique: true }
-    );
-
-    console.log("MongoDB Connected Successfully!");
-    console.log("Database: booknook");
-
-    app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
-      console.log(`Server URL: http://localhost:${PORT}`);
-    });
-  } catch (error) {
-    console.error("Server startup failed:", error);
-    process.exit(1);
-  }
-};
-
-run();
+export default app;
