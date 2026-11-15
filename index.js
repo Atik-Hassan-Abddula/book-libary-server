@@ -1,4 +1,3 @@
-
 import express from "express";
 import {
   MongoClient,
@@ -10,7 +9,6 @@ import "dotenv/config";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import { timingSafeEqual } from "crypto";
-
 import verifyToken from "./middleware/verifyToken.js";
 
 const app = express();
@@ -82,7 +80,6 @@ let database;
 let usersCollection;
 let booksCollection;
 let borrowsCollection;
-
 let connectionPromise;
 
 const connectDB = async () => {
@@ -437,7 +434,10 @@ app.post("/auth/google-exchange", async (req, res) => {
     }
 
     if (!user) {
-      throw new Error("Unable to find or create Google user.");
+      return res.status(500).json({
+        success: false,
+        message: "Unable to create or retrieve Google user.",
+      });
     }
 
     const safeUser = getSafeUser(user);
@@ -445,7 +445,7 @@ app.post("/auth/google-exchange", async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: "Google login successful.",
+      message: "Google authentication successful.",
       token,
       user: safeUser,
     });
@@ -458,7 +458,6 @@ app.post("/auth/google-exchange", async (req, res) => {
     });
   }
 });
-
 // =====================================
 // CURRENT USER
 // =====================================
@@ -729,7 +728,6 @@ app.delete("/books/:id", verifyToken, async (req, res) => {
     });
   }
 });
-
 // =====================================
 // BORROW BOOK
 // =====================================
@@ -773,6 +771,7 @@ app.post("/borrow", verifyToken, async (req, res) => {
 
     const borrowedAt = new Date();
     const dueDate = new Date(borrowedAt);
+
     dueDate.setDate(dueDate.getDate() + borrowDays);
 
     const bookUpdate = await booksCollection.updateOne(
@@ -1009,7 +1008,15 @@ app.use((error, req, res, next) => {
 });
 
 // =====================================
-// VERCEL SERVERLESS EXPORT
+// VERCEL SERVERLESS + LOCAL DEVELOPMENT
 // =====================================
+
+if (process.env.VERCEL !== "1") {
+  const PORT = process.env.PORT || 5000;
+
+  app.listen(PORT, () => {
+    console.log(`BookNook API running at http://localhost:${PORT}`);
+  });
+}
 
 export default app;
