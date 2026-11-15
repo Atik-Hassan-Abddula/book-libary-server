@@ -1006,7 +1006,6 @@ app.use((error, req, res, next) => {
     message: "Something went wrong on the server.",
   });
 });
-
 // =====================================
 // VERCEL SERVERLESS + LOCAL DEVELOPMENT
 // =====================================
